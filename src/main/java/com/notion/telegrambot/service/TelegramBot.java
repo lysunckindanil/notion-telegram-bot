@@ -33,7 +33,9 @@ public class TelegramBot extends TelegramLongPollingBot {
         super(config.getToken());
         this.config = config;
         this.userRepository = userRepository;
+        // menu
         List<BotCommand> listOfCommands = new ArrayList<>();
+        listOfCommands.add(new BotCommand("/state", "check active or not"));
         listOfCommands.add(new BotCommand("/run", "run notifications"));
         listOfCommands.add(new BotCommand("/stop", "stop notifications"));
         listOfCommands.add(new BotCommand("/show", "show your notifications"));
@@ -53,29 +55,47 @@ public class TelegramBot extends TelegramLongPollingBot {
         if (update.hasMessage() && update.getMessage().hasText()) {
             String messageText = update.getMessage().getText();
             long chatId = update.getMessage().getChatId();
+            User user = userRepository.findById(chatId).orElse(new User());
             switch (messageText) {
+                case "/state" -> {
+                    if (user.isActive()) sendMessage(chatId, "Notifications are active");
+                    else sendMessage(chatId, "Notifications are disabled");
+                    sessions.remove(chatId);
+                }
                 case "/start" -> {
                     startCommand(update.getMessage());
                     sessions.remove(chatId);
                 }
                 case "/run" -> {
-                    if (userRepository.findById(chatId).get().getNotions().isBlank())
+                    if (user.getNotions().isBlank()) {
                         sendMessage(chatId, "You don't have any notifications");
-                    else run(chatId);
+                    } else {
+                        if (!user.isActive()) {
+                            run(user);
+                            sendMessage(chatId, "Notifications are running");
+                            user.setActive(true);
+                        } else sendMessage(chatId, "Notifications are already running");
+                    }
                     sessions.remove(chatId);
                 }
                 case "/stop" -> {
-                    stop(chatId);
+                    if (user.isActive()) {
+                        stop(chatId);
+                        sendMessage(chatId, "Notifications are stopped");
+                        user.setActive(false);
+                    } else {
+                        sendMessage(chatId, "Notifications have already been stopped");
+                    }
                     sessions.remove(chatId);
                 }
                 case "/interval" -> {
-                    int interval = (int) (userRepository.findById(chatId).get().getInterval() / 1000 / 60);
+                    int interval = (int) (user.getInterval() / 1000 / 60);
                     if (interval != 1) sendMessage(chatId, "Your current interval is " + interval + " minutes");
                     else sendMessage(chatId, "Your current interval is " + interval + " minute");
                     sessions.remove(chatId);
                 }
                 case "/show" -> {
-                    if (userRepository.findById(chatId).get().getNotions().isBlank())
+                    if (user.getNotions().isBlank())
                         sendMessage(chatId, "You don't have any notifications");
                     else show(chatId);
                     sessions.remove(chatId);
@@ -90,7 +110,7 @@ public class TelegramBot extends TelegramLongPollingBot {
                     sessions.put(chatId, new Session("add"));
                 }
                 case "/delete" -> {
-                    if (userRepository.findById(chatId).get().getNotions().isBlank())
+                    if (user.getNotions().isBlank())
                         sendMessage(chatId, "You don't have any notifications");
                     else {
                         show(chatId);
@@ -99,30 +119,31 @@ public class TelegramBot extends TelegramLongPollingBot {
                     }
                 }
                 default -> {
-                    if (sessions.containsKey(chatId)) handleSession(chatId, messageText);
+                    if (sessions.containsKey(chatId)) handleSession(user, messageText);
                     else sendMessage(chatId, "Sorry, but I don't understand you");
                 }
             }
+            userRepository.save(user);
         }
     }
 
-    public void handleSession(long chatId, String messageText) {
+    public void handleSession(User user, String messageText) {
+        long chatId = user.getChatId();
         String session = sessions.get(chatId).getState();
-        User user = userRepository.findById(chatId).get();
+
         switch (session) {
             case "set" -> {
                 try {
                     long interval = Long.parseLong(messageText);
                     user.setInterval(interval * 60 * 1000);
-                    if (interval != 1)
-                        sendMessage(chatId, "Your interval was changed to " + interval + " minutes");
+                    if (interval != 1) sendMessage(chatId, "Your interval was changed to " + interval + " minutes");
                     else sendMessage(chatId, "Your interval was changed to " + interval + " minute");
-                    sessions.remove(chatId);
-                    userRepository.save(user);
                     if (user.isActive()) {
                         stop(chatId);
-                        run(chatId);
+                        run(user);
                     }
+                    sessions.remove(chatId);
+
                 } catch (NumberFormatException e) {
                     sendMessage(chatId, "Enter valid number, please");
                 }
@@ -133,7 +154,6 @@ public class TelegramBot extends TelegramLongPollingBot {
                 else user.setNotions(notions + "%%" + messageText);
                 sendMessage(chatId, "You successfully added new notification");
                 sessions.remove(chatId);
-                userRepository.save(user);
             }
             case "delete" -> {
                 try {
@@ -144,7 +164,6 @@ public class TelegramBot extends TelegramLongPollingBot {
                         sendMessage(chatId, "You successfully deleted the notification");
                         user.setNotions(String.join("%%", notions));
                         sessions.remove(chatId);
-                        userRepository.save(user);
                     } else sendMessage(chatId, "Enter valid number, please");
                 } catch (NumberFormatException e) {
                     sendMessage(chatId, "Enter valid number, please");
@@ -162,41 +181,22 @@ public class TelegramBot extends TelegramLongPollingBot {
         }
     }
 
-    public void run(long chatId) {
-        User user = userRepository.findById(chatId).get();
-        String[] notions = user.getNotions().split("%%");
-        if (!user.isActive()) {
-            if (notions.length > 0) {
-                user.setActive(true);
-                threads.put(chatId, start(chatId, user.getInterval(), notions));
-                userRepository.save(user);
-                sendMessage(chatId, "Notifications are running");
-            } else {
-                sendMessage(chatId, "Please, add notifications firstly!");
-            }
-        } else {
-            sendMessage(chatId, "Notifications are already running");
+    public void stop(long chatId) {
+        Thread thread = threads.get(chatId);
+        if (thread != null) {
+            thread.interrupt();
+            threads.remove(chatId);
         }
     }
 
-    public void stop(long chatId) {
-        User user = userRepository.findById(chatId).get();
-        if (user.isActive()) {
-            user.setActive(false);
-            Thread thread = threads.get(chatId);
-            if (thread != null) {
-                thread.interrupt();
-                threads.remove(chatId);
-            }
-            userRepository.save(user);
-            sendMessage(chatId, "Notifications are stopped");
-        } else {
-            sendMessage(chatId, "Notifications have already been stopped");
-        }
+    public void run(User user) {
+        String[] notions = user.getNotions().split("%%");
+        Thread thread = start(user.getChatId(), user.getInterval(), notions);
+        threads.put(user.getChatId(), thread);
     }
 
     @SuppressWarnings("BusyWait")
-    public Thread start(long chatId, long interval, String[] notions) {
+    private Thread start(long chatId, long interval, String[] notions) {
         Runnable task = () -> {
             while (true) {
                 try {
