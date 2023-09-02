@@ -1,6 +1,8 @@
 package com.notion.telegrambot.service;
 
 import com.notion.telegrambot.config.BotConfig;
+import com.notion.telegrambot.model.Notification;
+import com.notion.telegrambot.model.NotificationRepository;
 import com.notion.telegrambot.model.User;
 import com.notion.telegrambot.model.UserRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -25,16 +27,18 @@ import static com.notion.telegrambot.service.tools.ConvertTool.*;
 public class TelegramBot extends TelegramLongPollingBot {
     BotConfig config;
     UserRepository userRepository;
+    NotificationRepository notificationRepository;
 
     Map<Long, Thread> threads = new HashMap<>();
 
     Map<Long, Session> sessions = new HashMap<>();
 
     @Autowired
-    public TelegramBot(BotConfig config, UserRepository userRepository) {
+    public TelegramBot(BotConfig config, UserRepository userRepository, NotificationRepository notificationRepository) {
         super(config.getToken());
         this.config = config;
         this.userRepository = userRepository;
+        this.notificationRepository = notificationRepository;
         // menu
         List<BotCommand> listOfCommands = new ArrayList<>();
         listOfCommands.add(new BotCommand("/state", "check active or not"));
@@ -65,17 +69,18 @@ public class TelegramBot extends TelegramLongPollingBot {
                     sessions.remove(chatId);
                 }
                 case "/start" -> {
-                    startCommand(update.getMessage());
+                    startCommand(update.getMessage(), user);
                     sessions.remove(chatId);
                 }
                 case "/run" -> {
-                    if (user.getNotions().isEmpty()) {
+                    if (user.getNotifications().isEmpty()) {
                         sendMessage(chatId, "You don't have any notifications");
                     } else {
                         if (!user.isActive()) {
                             run(user);
                             sendMessage(chatId, "Notifications are running");
                             user.setActive(true);
+                            userRepository.save(user);
                         } else sendMessage(chatId, "Notifications are already running");
                     }
                     sessions.remove(chatId);
@@ -85,6 +90,7 @@ public class TelegramBot extends TelegramLongPollingBot {
                         stop(chatId);
                         sendMessage(chatId, "Notifications are stopped");
                         user.setActive(false);
+                        userRepository.save(user);
                     } else {
                         sendMessage(chatId, "Notifications have already been stopped");
                     }
@@ -97,9 +103,8 @@ public class TelegramBot extends TelegramLongPollingBot {
                     sessions.remove(chatId);
                 }
                 case "/show" -> {
-                    if (user.getNotions().isEmpty())
-                        sendMessage(chatId, "You don't have any notifications");
-                    else show(chatId);
+                    if (user.getNotifications().isEmpty()) sendMessage(chatId, "You don't have any notifications");
+                    else show(user);
                     sessions.remove(chatId);
                 }
                 // session required
@@ -112,10 +117,9 @@ public class TelegramBot extends TelegramLongPollingBot {
                     sessions.put(chatId, new Session("add"));
                 }
                 case "/delete" -> {
-                    if (user.getNotions().isEmpty())
-                        sendMessage(chatId, "You don't have any notifications");
+                    if (user.getNotifications().isEmpty()) sendMessage(chatId, "You don't have any notifications");
                     else {
-                        show(chatId);
+                        show(user);
                         sendMessage(chatId, "Enter number of one you want to delete, please");
                         sessions.put(chatId, new Session("delete"));
                     }
@@ -125,7 +129,6 @@ public class TelegramBot extends TelegramLongPollingBot {
                     else sendMessage(chatId, "Sorry, but I don't understand you");
                 }
             }
-            userRepository.save(user);
         }
     }
 
@@ -138,45 +141,51 @@ public class TelegramBot extends TelegramLongPollingBot {
                 try {
                     int interval = Integer.parseInt(messageText);
                     user.setInterval(convertFromMinutes(interval));
-                    if (interval != 1) sendMessage(chatId, "Your interval was changed to " + interval + " minutes");
-                    else sendMessage(chatId, "Your interval was changed to " + interval + " minute");
                     if (user.isActive()) {
                         stop(chatId);
                         run(user);
                     }
-                    sessions.remove(chatId);
 
+                    userRepository.save(user);
+                    sessions.remove(chatId);
+                    if (interval != 1) sendMessage(chatId, "Your interval was changed to " + interval + " minutes");
+                    else sendMessage(chatId, "Your interval was changed to " + interval + " minute");
                 } catch (NumberFormatException e) {
                     sendMessage(chatId, "Enter valid number, please");
                 }
             }
             case "add" -> {
-                user.setNotions(addElementToRegexString(user.getNotions(), messageText));
-                sendMessage(chatId, "You successfully added new notification");
+                Notification notification = new Notification();
+                notification.setDescription(messageText);
+
+                user.addNotification(notification);
                 sessions.remove(chatId);
+                userRepository.save(user);
+                sendMessage(chatId, "You successfully added new notification");
             }
             case "delete" -> {
+                int index = Integer.parseInt(messageText) - 1;
+                List<Notification> notifications = user.getNotifications();
                 try {
-                    List<String> notions = new ArrayList<>(Arrays.stream(splitStringByRegex(user.getNotions())).toList());
-                    int i = Integer.parseInt(messageText);
-                    if (i - 1 < notions.size() && i > 0) {
-                        notions.remove(i - 1);
-                        sendMessage(chatId, "You successfully deleted the notification");
-                        user.setNotions(joinArrayByRegex(notions.toArray(new String[0])));
+                    if (index < notifications.size() && index >= 0) {
+                        long id = notifications.get(index).getId();
+                        notificationRepository.deleteById(id);
                         sessions.remove(chatId);
+                        sendMessage(chatId, "You successfully deleted the notification");
                     } else sendMessage(chatId, "Enter valid number, please");
                 } catch (NumberFormatException e) {
                     sendMessage(chatId, "Enter valid number, please");
                 }
             }
         }
+
     }
 
-    public void startCommand(Message message) {
+    public void startCommand(Message message, User user) {
         if (!userRepository.existsById(message.getChatId())) {
-            User user = new User();
             user.setChatId(message.getChatId());
-            user.setInterval(convertFromMinutes(45)); // 45 minutes by default
+            user.setInterval(DEFAULT_INTERVAL); // 45 minutes by default
+            userRepository.save(user);
         }
     }
 
@@ -189,7 +198,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     }
 
     public void run(User user) {
-        String[] notions = splitStringByRegex(user.getNotions());
+        String[] notions = (String[]) user.getNotifications().stream().map(Notification::getDescription).toArray();
         Thread thread = start(user.getChatId(), user.getInterval(), notions);
         threads.put(user.getChatId(), thread);
     }
@@ -213,14 +222,14 @@ public class TelegramBot extends TelegramLongPollingBot {
         return thread;
     }
 
-    public void show(long chatId) {
+    public void show(User user) {
         StringJoiner stringJoiner = new StringJoiner("\n");
         stringJoiner.add("Your notifications:");
-        String[] notions = splitStringByRegex(userRepository.findById(chatId).get().getNotions());
-        for (int i = 0; i < notions.length; i++) {
-            stringJoiner.add(String.format("%d. %s", i + 1, notions[i]));
+        List<Notification> notifications = user.getNotifications();
+        for (int i = 0; i < notifications.size(); i++) {
+            stringJoiner.add(String.format("%d. %s", i + 1, notifications.get(i).getDescription()));
         }
-        sendMessage(chatId, stringJoiner.toString());
+        sendMessage(user.getChatId(), stringJoiner.toString());
     }
 
     public void sendMessage(long chatId, String text) {
