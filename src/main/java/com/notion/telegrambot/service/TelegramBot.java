@@ -21,7 +21,6 @@ import java.util.*;
 
 import static com.notion.telegrambot.service.tools.ConvertTool.*;
 
-@SuppressWarnings("OptionalGetWithoutIsPresent")
 @Component
 @Slf4j
 public class TelegramBot extends TelegramLongPollingBot {
@@ -155,11 +154,10 @@ public class TelegramBot extends TelegramLongPollingBot {
                 }
             }
             case "add" -> {
-                Notification notification = new Notification();
-                notification.setDescription(messageText);
-
+                Notification notification = new Notification(messageText);
                 user.addNotification(notification);
                 sessions.remove(chatId);
+                notificationRepository.save(notification);
                 userRepository.save(user);
                 sendMessage(chatId, "You successfully added new notification");
             }
@@ -168,8 +166,10 @@ public class TelegramBot extends TelegramLongPollingBot {
                 List<Notification> notifications = user.getNotifications();
                 try {
                     if (index < notifications.size() && index >= 0) {
-                        long id = notifications.get(index).getId();
-                        notificationRepository.deleteById(id);
+                        Notification notification = notifications.remove(index);
+                        user.setNotifications(notifications);
+                        userRepository.save(user);
+                        notificationRepository.deleteById(notification.getId());
                         sessions.remove(chatId);
                         sendMessage(chatId, "You successfully deleted the notification");
                     } else sendMessage(chatId, "Enter valid number, please");
