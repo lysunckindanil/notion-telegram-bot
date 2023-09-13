@@ -40,13 +40,11 @@ public class TelegramBot extends TelegramLongPollingBot {
         this.notificationRepository = notificationRepository;
         // menu
         List<BotCommand> listOfCommands = new ArrayList<>();
-        listOfCommands.add(new BotCommand("/state", "check active or not"));
+        listOfCommands.add(new BotCommand("/state", "notifications, interval and activity"));
         listOfCommands.add(new BotCommand("/run", "run notifications"));
         listOfCommands.add(new BotCommand("/stop", "stop notifications"));
-        listOfCommands.add(new BotCommand("/show", "show your notifications"));
         listOfCommands.add(new BotCommand("/add", "add new notification"));
         listOfCommands.add(new BotCommand("/delete", "delete notification"));
-        listOfCommands.add(new BotCommand("/interval", "get your current interval"));
         listOfCommands.add(new BotCommand("/set", "set interval"));
         try {
             this.execute(new SetMyCommands(listOfCommands, new BotCommandScopeDefault(), null));
@@ -65,6 +63,11 @@ public class TelegramBot extends TelegramLongPollingBot {
                 case "/state" -> {
                     if (user.isActive()) sendMessage(chatId, "Notifications are active");
                     else sendMessage(chatId, "Notifications are disabled");
+                    int interval = convertToMinutes(user.getInterval());
+                    if (interval != 1) sendMessage(chatId, "Your current interval is " + interval + " minutes");
+                    else sendMessage(chatId, "Your current interval is " + interval + " minute");
+                    if (user.getNotifications().isEmpty()) sendMessage(chatId, "You don't have any notifications");
+                    else show(user);
                     sessions.remove(chatId);
                 }
                 case "/start" -> {
@@ -93,17 +96,6 @@ public class TelegramBot extends TelegramLongPollingBot {
                     } else {
                         sendMessage(chatId, "Notifications have already been stopped");
                     }
-                    sessions.remove(chatId);
-                }
-                case "/interval" -> {
-                    int interval = convertToMinutes(user.getInterval());
-                    if (interval != 1) sendMessage(chatId, "Your current interval is " + interval + " minutes");
-                    else sendMessage(chatId, "Your current interval is " + interval + " minute");
-                    sessions.remove(chatId);
-                }
-                case "/show" -> {
-                    if (user.getNotifications().isEmpty()) sendMessage(chatId, "You don't have any notifications");
-                    else show(user);
                     sessions.remove(chatId);
                 }
                 // session required
@@ -198,8 +190,8 @@ public class TelegramBot extends TelegramLongPollingBot {
     }
 
     public void run(User user) {
-        String[] notions = (String[]) user.getNotifications().stream().map(Notification::getDescription).toArray();
-        Thread thread = start(user.getChatId(), user.getInterval(), notions);
+        List<String> notions = user.getNotifications().stream().map(Notification::getDescription).toList();
+        Thread thread = start(user.getChatId(), user.getInterval(), notions.toArray(new String[0]));
         threads.put(user.getChatId(), thread);
     }
 
