@@ -61,7 +61,7 @@ public class TelegramBot extends TelegramLongPollingBot {
             User user = userRepository.findById(chatId).orElse(new User());
             switch (messageText) {
                 case "/state" -> {
-                    if (user.isActive()) sendMessage(chatId, "Notifications are active");
+                    if (threads.containsKey(chatId)) sendMessage(chatId, "Notifications are active");
                     else sendMessage(chatId, "Notifications are disabled");
                     int interval = convertToMinutes(user.getInterval());
                     if (interval != 1) sendMessage(chatId, "Your current interval is " + interval + " minutes");
@@ -78,20 +78,18 @@ public class TelegramBot extends TelegramLongPollingBot {
                     if (user.getNotifications().isEmpty()) {
                         sendMessage(chatId, "You don't have any notifications");
                     } else {
-                        if (!user.isActive()) {
+                        if (!threads.containsKey(chatId)) {
                             run(user);
                             sendMessage(chatId, "Notifications are running");
-                            user.setActive(true);
                             userRepository.save(user);
                         } else sendMessage(chatId, "Notifications are already running");
                     }
                     sessions.remove(chatId);
                 }
                 case "/stop" -> {
-                    if (user.isActive()) {
+                    if (threads.containsKey(chatId)) {
                         stop(chatId);
                         sendMessage(chatId, "Notifications are stopped");
-                        user.setActive(false);
                         userRepository.save(user);
                     } else {
                         sendMessage(chatId, "Notifications have already been stopped");
@@ -132,7 +130,7 @@ public class TelegramBot extends TelegramLongPollingBot {
                 try {
                     int interval = Integer.parseInt(messageText);
                     user.setInterval(convertFromMinutes(interval));
-                    if (user.isActive()) {
+                    if (threads.containsKey(chatId)) {
                         stop(chatId);
                         run(user);
                     }
@@ -199,13 +197,13 @@ public class TelegramBot extends TelegramLongPollingBot {
     private Thread start(long chatId, long interval, String[] notions) {
         Runnable task = () -> {
             while (true) {
+                for (String notion : notions) {
+                    sendMessage(chatId, notion);
+                }
                 try {
                     Thread.sleep(interval);
                 } catch (InterruptedException e) {
                     break;
-                }
-                for (String notion : notions) {
-                    sendMessage(chatId, notion);
                 }
             }
         };
@@ -234,7 +232,6 @@ public class TelegramBot extends TelegramLongPollingBot {
             log.error("Unable to send message");
         }
     }
-
 
     @Override
     public String getBotUsername() {

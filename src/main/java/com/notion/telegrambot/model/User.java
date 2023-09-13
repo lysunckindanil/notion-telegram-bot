@@ -13,7 +13,6 @@ import java.util.List;
 public class User {
     @Id
     private Long chatId;
-    private boolean active;
     private long interval;
     @OneToMany(fetch = FetchType.EAGER, mappedBy = "user")
     private List<Notification> notifications;
@@ -21,11 +20,6 @@ public class User {
     public void addNotification(Notification notification) {
         notification.setUser(this);
         notifications.add(notification);
-    }
-
-    @PrePersist
-    public void init() {
-        active = false;
     }
 
 }

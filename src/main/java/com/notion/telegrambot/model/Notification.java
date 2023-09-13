@@ -9,7 +9,6 @@ import lombok.Setter;
 @Getter
 @Setter
 @NoArgsConstructor
-
 @Table(name = "notifications")
 public class Notification {
     public Notification(String description) {
