@@ -30,7 +30,23 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     Map<Long, Thread> threads = new HashMap<>();
 
-    Map<Long, Session> sessions = new HashMap<>();
+    Map<Long, Session> sessions = new HashMap<>() {
+        private static final int SESSION_TIME_MINUTES = 10;
+
+        @Override
+        public Session put(Long key, Session value) {
+            Calendar session_time = new GregorianCalendar();
+            session_time.add(Calendar.SECOND, -SESSION_TIME_MINUTES);
+            for (Entry<Long, Session> entry : this.entrySet()) {
+                Calendar entry_calendar = new GregorianCalendar();
+                entry_calendar.setTimeInMillis(entry.getValue().getCreated());
+                if (session_time.after(entry_calendar)) {
+                    sessions.remove(entry.getKey());
+                }
+            }
+            return super.put(key, value);
+        }
+    };
 
     @Autowired
     public TelegramBot(BotConfig config, UserRepository userRepository, NotificationRepository notificationRepository) {
